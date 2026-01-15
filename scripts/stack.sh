@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # Stack management script
-# Usage: ./stack_manager.sh [command] [item]
+# Usage: ./stack.sh [command] [item]
 
 
 STACK_PATH="${STACK_PATH:-$HOME/.stack}"
-STACK_FILE=${STACK_PATH}/in_progress
-COMPLETED_FILE=${STACK_PATH}/done
+STACK_FILE="$STACK_PATH/in_progress"
+COMPLETED_FILE="$STACK_PATH/done"
 
 # Function to display usage
-usage() {
+function usage {
     echo "Usage: $0 {add|pop|list|promote|done|clear_done} [item]"
     echo "  add        - Add item to stack (with timestamp)"
     echo "  pop        - Remove and display top item.  Top item is added to the done list"
@@ -23,7 +23,7 @@ usage() {
 
 # Function to check if stack file exists, create if not
 function check_stack_file {
-    mkdir -p $STACK_PATH
+    mkdir -p "$STACK_PATH"
 
     if [ ! -f "$STACK_FILE" ]; then
         touch "$STACK_FILE"
@@ -32,11 +32,13 @@ function check_stack_file {
 
 # Function to add item to stack
 function add {
-    local item="$@"
+    local item="$*"
     if [ -z "$item" ]; then
         echo "Error: Item cannot be empty"
         exit 1
     fi
+    
+    check_stack_file
     
     local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
     echo "$timestamp|$item" >> "$STACK_FILE"
@@ -56,7 +58,16 @@ function pop {
     local top_item=$(tail -n 1 "$STACK_FILE")
     
     # Remove the last line from file
-    sed -i '$d' "$STACK_FILE"
+    if ! sed -i.bak '$d' "$STACK_FILE"; then
+        echo "Error: Failed to remove item from stack"
+        exit 1
+    fi
+    rm -f "$STACK_FILE.bak"
+    
+    # Ensure completed file exists
+    if [ ! -f "$COMPLETED_FILE" ]; then
+        touch "$COMPLETED_FILE"
+    fi
     
     local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
     echo "$timestamp|$top_item" >> "$COMPLETED_FILE"
@@ -77,21 +88,27 @@ function list {
     echo "To do:"
     echo "==============================="
     # Display from top to bottom (reverse order)
-    tac "$STACK_FILE" | cat -n
+    if ! tac "$STACK_FILE" | nl; then
+        echo "Error: Failed to display stack"
+        return 1
+    fi
 }
 
 function done {
     check_stack_file
     
     if [ ! -s "$COMPLETED_FILE" ]; then
-        echo "Stack is empty"
+        echo "Done list is empty"
         return 1
     fi
     
     echo "Done:"
     echo "==============================="
     # Display from top to bottom (reverse order)
-    tac "$COMPLETED_FILE" | cat -n
+    if ! tac "$COMPLETED_FILE" | nl; then
+        echo "Error: Failed to display done list"
+        return 1
+    fi
 }
 
 function clear_done {
@@ -99,8 +116,11 @@ function clear_done {
         echo "Done list is already clear"
         return 1
     fi
-    local timestamp=$(date +"%Y%m%dT%H:%M:%S")
-    mv $COMPLETED_FILE $STACK_PATH/$timestamp.done
+    local timestamp=$(date +"%Y%m%d_%H%M%S")
+    if ! mv "$COMPLETED_FILE" "$STACK_PATH/$timestamp.done"; then
+        echo "Error: Failed to archive done list"
+        exit 1
+    fi
 }
 
 function promote {
@@ -147,12 +167,28 @@ function promote {
     # Get the specific line content (convert to 0-based index for sed)
     local target_line=$(sed -n "${file_line_number}p" "$STACK_FILE")
     
+    # Validate that we got a line
+    if [ -z "$target_line" ]; then
+        echo "Error: Failed to read line from stack file"
+        exit 1
+    fi
+    
+    # Validate that line contains the pipe delimiter
+    if [[ ! "$target_line" =~ \| ]]; then
+        echo "Error: Invalid stack file format (missing delimiter)"
+        exit 1
+    fi
+    
     # Extract timestamp and item name
     local timestamp="${target_line%|*}"
     local item_name="${target_line#*|}"
     
     # Remove the specific line from file
-    sed -i "${file_line_number}d" "$STACK_FILE"
+    if ! sed -i.bak "${file_line_number}d" "$STACK_FILE"; then
+        echo "Error: Failed to remove item from stack"
+        exit 1
+    fi
+    rm -f "$STACK_FILE.bak"
     
     # Add the item back to the end (top of stack)
     echo "$timestamp|$item_name" >> "$STACK_FILE"
@@ -167,7 +203,7 @@ function default {
 function help {
   echo "$0 <task> <args>"
   echo "Tasks:"
-  compgen -A function | cat -n
+  compgen -A function | nl
 }
 
 TIMEFORMAT="Task completed in %3lR"
